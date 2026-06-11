@@ -6,10 +6,11 @@ law firms across major US metros.
 | Stage | Source | What it pulls |
 |-------|--------|---------------|
 | 1 | Google Places API (New) | firm name, address, phone, website, rating, review count |
-| 2 | [ScrapeGraphAI hosted API](https://scrapegraphai.com) | primary email + contact name from each firm's own website |
+| 2 | requests + BeautifulSoup | email scraped directly from each firm's own website |
 
-Stage 2 runs on ScrapeGraphAI's hosted API (`scrapegraph-py`), so it needs no
-local browser and no OpenAI key — the service handles fetching and the LLM.
+Stage 2 fetches each firm's homepage (and any "contact" pages) and extracts
+emails from `mailto:` links and common email patterns. No external API key.
+Note: `contact_name` is not populated by this method — it needs an LLM/NER pass.
 
 Output: `pi_attorney_leads.csv`
 
@@ -35,8 +36,11 @@ will not be committed.
 
 ```bash
 export GOOGLE_MAPS_API_KEY=...   # Stage 1: enable "Places API (New)" in Google Cloud
-export SGAI_API_KEY=...          # Stage 2: ScrapeGraphAI dashboard key
 ```
+
+> Stage 2 needs outbound access to arbitrary firm websites. It will not work in
+> a restricted-egress environment whose network policy only allowlists specific
+> hosts — run it where general internet egress is allowed.
 
 ## Run
 
@@ -51,7 +55,7 @@ Edit the constants at the top of `pi_attorney_scraper.py`:
 - `METROS` — metros to search. More metros = more coverage = more API cost.
 - `SEARCH_TERM` — the Places query (default: `personal injury attorney`).
 - `ENRICH_WITH_LLM` — set `False` to skip Stage 2 (no email scraping, lower cost).
-- `ENRICH_WORKERS` — concurrent hosted-API requests during Stage 2 (default 8).
+- `ENRICH_WORKERS` — concurrent website fetches during Stage 2 (default 8).
 - `OUTPUT` — output CSV filename.
 
 ## Output columns

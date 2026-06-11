@@ -1,0 +1,4 @@
+scrapegraphai
+googlemaps
+pandas
+pydantic

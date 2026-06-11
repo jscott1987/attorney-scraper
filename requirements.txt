@@ -1,5 +1,2 @@
 requests
 python-dotenv
-
-# Stage 2 (email scraping):
-beautifulsoup4

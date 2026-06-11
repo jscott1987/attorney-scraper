@@ -5,8 +5,11 @@ law firms across major US metros.
 
 | Stage | Source | What it pulls |
 |-------|--------|---------------|
-| 1 | Google Places API | firm name, address, phone, website, rating, review count |
-| 2 | [ScrapeGraphAI](https://github.com/ScrapeGraphAI/Scrapegraph-ai) | primary email + contact name from each firm's own website |
+| 1 | Google Places API (New) | firm name, address, phone, website, rating, review count |
+| 2 | [ScrapeGraphAI hosted API](https://scrapegraphai.com) | primary email + contact name from each firm's own website |
+
+Stage 2 runs on ScrapeGraphAI's hosted API (`scrapegraph-py`), so it needs no
+local browser and no OpenAI key — the service handles fetching and the LLM.
 
 Output: `pi_attorney_leads.csv`
 
@@ -14,7 +17,6 @@ Output: `pi_attorney_leads.csv`
 
 ```bash
 pip install -r requirements.txt
-playwright install            # only needed if you run ScrapeGraphAI locally
 ```
 
 Provide your API keys one of two ways:
@@ -32,8 +34,8 @@ will not be committed.
 **Option B — shell environment variables:**
 
 ```bash
-export GOOGLE_MAPS_API_KEY=...   # enable "Places API (New)" in Google Cloud
-export OPENAI_API_KEY=...        # or swap the model in graph_config
+export GOOGLE_MAPS_API_KEY=...   # Stage 1: enable "Places API (New)" in Google Cloud
+export SGAI_API_KEY=...          # Stage 2: ScrapeGraphAI dashboard key
 ```
 
 ## Run
@@ -49,6 +51,7 @@ Edit the constants at the top of `pi_attorney_scraper.py`:
 - `METROS` — metros to search. More metros = more coverage = more API cost.
 - `SEARCH_TERM` — the Places query (default: `personal injury attorney`).
 - `ENRICH_WITH_LLM` — set `False` to skip Stage 2 (no email scraping, lower cost).
+- `ENRICH_WORKERS` — concurrent hosted-API requests during Stage 2 (default 8).
 - `OUTPUT` — output CSV filename.
 
 ## Output columns
@@ -57,7 +60,9 @@ Edit the constants at the top of `pi_attorney_scraper.py`:
 
 ## Notes
 
-- Google requires a short delay before a `next_page_token` becomes valid; the
-  script sleeps 2s between pages.
+- Places API (New) returns at most 60 results per text query (3 pages of 20), so
+  each metro is capped at the top ~60 firms by Google's relevance ranking.
 - Stage 2 cost scales with the number of firms that have a website. Disable it
   with `ENRICH_WITH_LLM = False` for a phone/website-only pull.
+- Stage 2 runs requests concurrently and flushes the CSV every 25 completions,
+  so a long run is resilient to interruption.

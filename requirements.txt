@@ -1,5 +1,6 @@
-scrapegraphai
-googlemaps
-pandas
-pydantic
+requests
 python-dotenv
+
+# Stage 2 (email/contact enrichment) only:
+scrapegraphai
+pydantic

@@ -2,26 +2,26 @@
 Personal Injury Attorney Lead Scraper (US)
 
 Two-stage pipeline:
-  Stage 1  Google Places API  -> name, address, phone, website, rating (legal, structured)
-  Stage 2  ScrapeGraphAI      -> email + contact name from each firm's OWN website
+  Stage 1  Google Places API (New)  -> name, address, phone, website, rating (legal, structured)
+  Stage 2  ScrapeGraphAI            -> email + contact name from each firm's OWN website
 
 Output: pi_attorney_leads.csv  (HubSpot-import ready)
 
 Setup:
   pip install -r requirements.txt
-  playwright install            # only needed if you run ScrapeGraphAI locally
-  export GOOGLE_MAPS_API_KEY=...   # enable "Places API (New)" in Google Cloud
-  export OPENAI_API_KEY=...        # or swap model in graph_config below
+  playwright install            # only needed if you run ScrapeGraphAI locally (Stage 2)
+
+Provide keys via a local .env file (see .env.example) or environment variables:
+  GOOGLE_MAPS_API_KEY=...   # enable "Places API (New)" in Google Cloud
+  OPENAI_API_KEY=...        # or swap the model in graph_config (Stage 2 only)
 """
 
 import os
 import csv
 import time
 
-import googlemaps
+import requests
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
-from scrapegraphai.graphs import SmartScraperGraph
 
 # Load a local .env file (if present) so API keys can live outside the shell.
 load_dotenv()
@@ -31,17 +31,6 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 GMAPS_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
 LLM_KEY = os.environ.get("OPENAI_API_KEY")
-
-_missing = [
-    name for name, val in
-    (("GOOGLE_MAPS_API_KEY", GMAPS_KEY), ("OPENAI_API_KEY", LLM_KEY))
-    if not val
-]
-if _missing:
-    raise SystemExit(
-        f"Missing required env var(s): {', '.join(_missing)}. "
-        "Set them in your shell or in a local .env file (see .env.example)."
-    )
 
 # Add/remove metros. More metros = more coverage = more API cost.
 METROS = [
@@ -54,6 +43,19 @@ SEARCH_TERM = "personal injury attorney"
 ENRICH_WITH_LLM = True   # set False to skip Stage 2 (no email scraping, lower cost)
 OUTPUT = "pi_attorney_leads.csv"
 
+# Places API (New) endpoint + the fields we want back (field mask is required).
+PLACES_SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
+PLACES_FIELD_MASK = ",".join([
+    "places.id",
+    "places.displayName",
+    "places.formattedAddress",
+    "places.nationalPhoneNumber",
+    "places.websiteUri",
+    "places.rating",
+    "places.userRatingCount",
+    "nextPageToken",
+])
+
 graph_config = {
     "llm": {"api_key": LLM_KEY, "model": "openai/gpt-4o-mini"},
     "verbose": False,
@@ -61,55 +63,72 @@ graph_config = {
 }
 
 
+def _require_key(name, val):
+    if not val:
+        raise SystemExit(
+            f"Missing required env var: {name}. "
+            "Set it in your shell or in a local .env file (see .env.example)."
+        )
+
+
 # ---------------------------------------------------------------------------
-# STAGE 1  -- Google Places: get firms + phone + website
+# STAGE 1  -- Google Places API (New): get firms + phone + website
 # ---------------------------------------------------------------------------
-def fetch_firms(gmaps, metros, term):
+def fetch_firms(metros, term):
+    _require_key("GOOGLE_MAPS_API_KEY", GMAPS_KEY)
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": GMAPS_KEY,
+        "X-Goog-FieldMask": PLACES_FIELD_MASK,
+    }
     seen = set()
     firms = []
     for metro in metros:
         print(f"[places] {term} in {metro}")
-        resp = gmaps.places(query=f"{term} in {metro}")
-        page = resp
+        body = {"textQuery": f"{term} in {metro}"}
         while True:
-            for r in page.get("results", []):
-                pid = r["place_id"]
-                if pid in seen:
+            resp = requests.post(PLACES_SEARCH_URL, headers=headers, json=body, timeout=30)
+            if resp.status_code != 200:
+                print(f"[places] error {resp.status_code} for {metro}: {resp.text[:300]}")
+                break
+            data = resp.json()
+            for r in data.get("places", []):
+                pid = r.get("id")
+                if not pid or pid in seen:
                     continue
                 seen.add(pid)
-                d = gmaps.place(
-                    place_id=pid,
-                    fields=["name", "formatted_address", "formatted_phone_number",
-                            "website", "rating", "user_ratings_total"],
-                ).get("result", {})
                 firms.append({
-                    "firm": d.get("name", ""),
-                    "address": d.get("formatted_address", ""),
-                    "phone": d.get("formatted_phone_number", ""),
-                    "website": d.get("website", ""),
-                    "rating": d.get("rating", ""),
-                    "reviews": d.get("user_ratings_total", ""),
-                    "metro": metro,
-                    "email": "",
+                    "firm": (r.get("displayName") or {}).get("text", ""),
                     "contact_name": "",
+                    "phone": r.get("nationalPhoneNumber", ""),
+                    "email": "",
+                    "website": r.get("websiteUri", ""),
+                    "address": r.get("formattedAddress", ""),
+                    "metro": metro,
+                    "rating": r.get("rating", ""),
+                    "reviews": r.get("userRatingCount", ""),
                 })
-            token = page.get("next_page_token")
+            token = data.get("nextPageToken")
             if not token:
                 break
-            time.sleep(2)  # Google requires a short delay before next_page_token is valid
-            page = gmaps.places(query=f"{term} in {metro}", page_token=token)
+            time.sleep(2)  # brief delay before nextPageToken becomes valid
+            body = {"textQuery": f"{term} in {metro}", "pageToken": token}
     return firms
 
 
 # ---------------------------------------------------------------------------
 # STAGE 2  -- ScrapeGraphAI: pull email + contact from firm's own site
 # ---------------------------------------------------------------------------
-class Contact(BaseModel):
-    email: str = Field(default="", description="primary contact email address")
-    contact_name: str = Field(default="", description="a named attorney or intake contact")
-
-
 def enrich(firms):
+    _require_key("OPENAI_API_KEY", LLM_KEY)
+    # Imported lazily so Stage 1 doesn't depend on Stage 2's (heavier) deps.
+    from pydantic import BaseModel, Field
+    from scrapegraphai.graphs import SmartScraperGraph
+
+    class Contact(BaseModel):
+        email: str = Field(default="", description="primary contact email address")
+        contact_name: str = Field(default="", description="a named attorney or intake contact")
+
     for f in firms:
         site = f["website"]
         if not site:
@@ -132,20 +151,23 @@ def enrich(firms):
 
 
 # ---------------------------------------------------------------------------
+def write_csv(firms, path):
+    cols = ["firm", "contact_name", "phone", "email", "website",
+            "address", "metro", "rating", "reviews"]
+    with open(path, "w", newline="") as fp:
+        w = csv.DictWriter(fp, fieldnames=cols)
+        w.writeheader()
+        w.writerows(firms)
+
+
 def main():
-    gmaps = googlemaps.Client(key=GMAPS_KEY)
-    firms = fetch_firms(gmaps, METROS, SEARCH_TERM)
+    firms = fetch_firms(METROS, SEARCH_TERM)
     print(f"\n{len(firms)} unique firms found")
 
     if ENRICH_WITH_LLM:
         firms = enrich(firms)
 
-    cols = ["firm", "contact_name", "phone", "email", "website",
-            "address", "metro", "rating", "reviews"]
-    with open(OUTPUT, "w", newline="") as fp:
-        w = csv.DictWriter(fp, fieldnames=cols)
-        w.writeheader()
-        w.writerows(firms)
+    write_csv(firms, OUTPUT)
     print(f"\nWrote {OUTPUT}")
 
 

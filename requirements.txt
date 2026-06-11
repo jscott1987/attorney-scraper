@@ -1,6 +1,5 @@
 requests
 python-dotenv
 
-# Stage 2 (email/contact enrichment) — ScrapeGraphAI hosted API:
-scrapegraph-py
-pydantic
+# Stage 2 (email scraping):
+beautifulsoup4

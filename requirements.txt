@@ -2,3 +2,4 @@ scrapegraphai
 googlemaps
 pandas
 pydantic
+python-dotenv

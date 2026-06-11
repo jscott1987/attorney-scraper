@@ -15,7 +15,23 @@ Output: `pi_attorney_leads.csv`
 ```bash
 pip install -r requirements.txt
 playwright install            # only needed if you run ScrapeGraphAI locally
+```
 
+Provide your API keys one of two ways:
+
+**Option A — `.env` file (recommended).** Copy the template and fill it in:
+
+```bash
+cp .env.example .env
+# then edit .env with your real keys
+```
+
+The script auto-loads `.env` via `python-dotenv`. The file is gitignored, so it
+will not be committed.
+
+**Option B — shell environment variables:**
+
+```bash
 export GOOGLE_MAPS_API_KEY=...   # enable "Places API (New)" in Google Cloud
 export OPENAI_API_KEY=...        # or swap the model in graph_config
 ```

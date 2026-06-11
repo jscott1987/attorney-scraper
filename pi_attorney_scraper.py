@@ -19,14 +19,29 @@ import csv
 import time
 
 import googlemaps
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from scrapegraphai.graphs import SmartScraperGraph
+
+# Load a local .env file (if present) so API keys can live outside the shell.
+load_dotenv()
 
 # ---------------------------------------------------------------------------
 # CONFIG
 # ---------------------------------------------------------------------------
-GMAPS_KEY = os.environ["GOOGLE_MAPS_API_KEY"]
-LLM_KEY = os.environ["OPENAI_API_KEY"]
+GMAPS_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
+LLM_KEY = os.environ.get("OPENAI_API_KEY")
+
+_missing = [
+    name for name, val in
+    (("GOOGLE_MAPS_API_KEY", GMAPS_KEY), ("OPENAI_API_KEY", LLM_KEY))
+    if not val
+]
+if _missing:
+    raise SystemExit(
+        f"Missing required env var(s): {', '.join(_missing)}. "
+        "Set them in your shell or in a local .env file (see .env.example)."
+    )
 
 # Add/remove metros. More metros = more coverage = more API cost.
 METROS = [
